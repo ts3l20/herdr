@@ -204,6 +204,7 @@ pub struct HeadlessServer {
     native_graphics: native_graphics::NativeGraphics,
     interactive_input_deadlines: HashMap<crate::layout::PaneId, Instant>,
     interactive_render_budget: Option<(Instant, u8)>,
+    host_scroll_pending: bool,
     #[cfg(unix)]
     next_client_id: u64,
     /// The client currently driving session-wide host presentation and side effects.
@@ -361,6 +362,7 @@ impl HeadlessServer {
             native_graphics: Default::default(),
             interactive_input_deadlines: HashMap::new(),
             interactive_render_budget: None,
+            host_scroll_pending: false,
             #[cfg(unix)]
             next_client_id: 1,
             foreground_client_id: None,
@@ -600,6 +602,7 @@ impl HeadlessServer {
                 if interactive_due {
                     self.record_interactive_render(now);
                 }
+                self.host_scroll_pending = false;
                 needs_render = false;
                 needs_full_render = false;
                 needs_graphics_render = false;
@@ -2450,6 +2453,7 @@ impl HeadlessServer {
                 if input_forwarded {
                     self.note_interactive_input(runtime_pane_id, Instant::now());
                 }
+                self.host_scroll_pending |= scroll_changed;
                 if let Err(err) = input_result {
                     warn!(client_id, pane_id, err = %err, "targeted client shell input failed");
                 }
@@ -2539,6 +2543,7 @@ impl HeadlessServer {
                 if input_forwarded {
                     self.note_interactive_input(popup_pane_id, Instant::now());
                 }
+                self.host_scroll_pending |= scroll_changed;
                 if let Err(err) = input_result {
                     warn!(client_id, terminal_id, err = %err, "targeted client popup input failed");
                 }
