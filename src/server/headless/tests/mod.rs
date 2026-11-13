@@ -111,6 +111,7 @@ fn test_headless_server_with_event_hub(event_hub: api::EventHub) -> HeadlessServ
         native_graphics: Default::default(),
         interactive_input_deadlines: HashMap::new(),
         interactive_render_budget: None,
+        host_scroll_pending: false,
         #[cfg(unix)]
         next_client_id: 1,
         foreground_client_id: None,
@@ -3653,6 +3654,80 @@ async fn client_shell_mouse_motion_delivers_without_render_when_foreground() {
         input_rx.try_recv().is_ok(),
         "motion must still reach the PTY"
     );
+    shutdown_test_runtimes(&mut server);
+}
+
+#[tokio::test]
+async fn client_shell_wheel_to_mouse_program_opens_interactive_render_window() {
+    let mut server = test_headless_server();
+    let mut input_rx =
+        install_focused_test_runtime(&mut server, b"\x1b[?1049h\x1b[?1000h\x1b[?1006h");
+    let pane_id = server.app.state.workspaces[0].tabs[0].root_pane;
+    let public_pane_id = server.app.public_pane_id(0, pane_id).unwrap();
+    let (_control_rx, _render_rx) = connect_matching_test_shell(&mut server, 1);
+    server.interactive_input_deadlines.clear();
+
+    server.handle_server_event_with_render_impact(ServerEvent::ClientShellPaneInput {
+        client_id: 1,
+        pane_id: public_pane_id,
+        events: vec![crate::protocol::ClientPaneInputEvent::Mouse {
+            kind: crate::protocol::ClientMouseKind::ScrollDown,
+            position: crate::protocol::ClientMousePosition::Cell { column: 2, row: 1 },
+            geometry: None,
+            modifiers: 0,
+            lines: 3,
+        }],
+    });
+
+    assert_eq!(
+        input_rx.try_recv().unwrap(),
+        Bytes::from_static(b"\x1b[<65;3;2M")
+    );
+    assert!(server.interactive_input_deadlines.contains_key(&pane_id));
+    shutdown_test_runtimes(&mut server);
+}
+
+#[tokio::test]
+async fn client_shell_wheel_in_host_scrollback_allows_prompt_render() {
+    let mut server = test_headless_server();
+    let history = "line\r\n".repeat(200);
+    let mut workspace = crate::workspace::Workspace::test_new("host-scrollback");
+    let pane_id = workspace.tabs[0].root_pane;
+    let (runtime, mut input_rx) =
+        crate::terminal::TerminalRuntime::test_with_channel_and_scrollback_bytes(
+            80,
+            24,
+            1_000_000,
+            history.as_bytes(),
+            4,
+        );
+    workspace.insert_test_runtime(pane_id, runtime);
+    server.app.state.workspaces = vec![workspace];
+    server.app.state.active = Some(0);
+    server.app.state.selected = 0;
+    server.app.state.mode = crate::app::Mode::Terminal;
+    let public_pane_id = server.app.public_pane_id(0, pane_id).unwrap();
+    let (_control_rx, _render_rx) = connect_matching_test_shell(&mut server, 1);
+    server.interactive_input_deadlines.clear();
+
+    server.handle_server_event_with_render_impact(ServerEvent::ClientShellPaneInput {
+        client_id: 1,
+        pane_id: public_pane_id,
+        events: vec![crate::protocol::ClientPaneInputEvent::Mouse {
+            kind: crate::protocol::ClientMouseKind::ScrollUp,
+            position: crate::protocol::ClientMousePosition::Cell { column: 2, row: 1 },
+            geometry: None,
+            modifiers: 0,
+            lines: 3,
+        }],
+    });
+
+    assert!(input_rx.try_recv().is_err());
+    assert!(!server.interactive_input_deadlines.contains_key(&pane_id));
+    let now = Instant::now();
+    server.app.record_render_attempt(now, true);
+    assert!(!server.app.can_render_now(now));
+    assert!(server.can_render_interactive(now));
     shutdown_test_runtimes(&mut server);
 }
 

@@ -15,13 +15,15 @@ impl HeadlessServer {
         }) {
             return false;
         }
-        self.app
-            .render_dirty
-            .has_pending_visible_pty_source(|pane_id| {
-                self.interactive_input_deadlines
-                    .get(&pane_id)
-                    .is_some_and(|deadline| *deadline > now)
-            })
+        self.host_scroll_pending
+            || self
+                .app
+                .render_dirty
+                .has_pending_visible_pty_source(|pane_id| {
+                    self.interactive_input_deadlines
+                        .get(&pane_id)
+                        .is_some_and(|deadline| *deadline > now)
+                })
     }
 
     pub(super) fn record_interactive_render(&mut self, now: Instant) {
