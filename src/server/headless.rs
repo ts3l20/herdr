@@ -2439,15 +2439,15 @@ impl HeadlessServer {
                     return foreground_changed | geometry_changed;
                 };
                 let scroll_before = runtime.scroll_metrics();
-                let mut keyboard_forwarded = false;
+                let mut input_forwarded = false;
                 let input_result = apply_client_terminal_input_events(
                     runtime,
                     &events,
                     true,
-                    &mut keyboard_forwarded,
+                    &mut input_forwarded,
                 );
                 let scroll_changed = runtime.scroll_metrics() != scroll_before;
-                if keyboard_forwarded {
+                if input_forwarded {
                     self.note_interactive_input(runtime_pane_id, Instant::now());
                 }
                 if let Err(err) = input_result {
@@ -2528,15 +2528,15 @@ impl HeadlessServer {
                     return foreground_changed | geometry_changed;
                 };
                 let scroll_before = runtime.scroll_metrics();
-                let mut keyboard_forwarded = false;
+                let mut input_forwarded = false;
                 let input_result = apply_client_terminal_input_events(
                     runtime,
                     &events,
                     false,
-                    &mut keyboard_forwarded,
+                    &mut input_forwarded,
                 );
                 let scroll_changed = runtime.scroll_metrics() != scroll_before;
-                if keyboard_forwarded {
+                if input_forwarded {
                     self.note_interactive_input(popup_pane_id, Instant::now());
                 }
                 if let Err(err) = input_result {

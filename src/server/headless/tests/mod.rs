@@ -3657,6 +3657,62 @@ async fn client_shell_mouse_motion_delivers_without_render_when_foreground() {
 }
 
 #[tokio::test]
+async fn client_shell_wheel_to_mouse_program_opens_interactive_render_window() {
+    let mut server = test_headless_server();
+    let mut input_rx =
+        install_focused_test_runtime(&mut server, b"\x1b[?1049h\x1b[?1000h\x1b[?1006h");
+    let pane_id = server.app.state.workspaces[0].tabs[0].root_pane;
+    let public_pane_id = server.app.public_pane_id(0, pane_id).unwrap();
+    let (_control_rx, _render_rx) = connect_matching_test_shell(&mut server, 1);
+    server.interactive_input_deadlines.clear();
+
+    server.handle_server_event_with_render_impact(ServerEvent::ClientShellPaneInput {
+        client_id: 1,
+        pane_id: public_pane_id,
+        events: vec![crate::protocol::ClientPaneInputEvent::Mouse {
+            kind: crate::protocol::ClientMouseKind::ScrollDown,
+            position: crate::protocol::ClientMousePosition::Cell { column: 2, row: 1 },
+            geometry: None,
+            modifiers: 0,
+            lines: 3,
+        }],
+    });
+
+    assert_eq!(
+        input_rx.try_recv().unwrap(),
+        Bytes::from_static(b"\x1b[<65;3;2M")
+    );
+    assert!(server.interactive_input_deadlines.contains_key(&pane_id));
+    shutdown_test_runtimes(&mut server);
+}
+
+#[tokio::test]
+async fn client_shell_wheel_in_host_scrollback_keeps_render_cadence() {
+    let mut server = test_headless_server();
+    let mut input_rx = install_focused_test_runtime(&mut server, b"PS> old");
+    let pane_id = server.app.state.workspaces[0].tabs[0].root_pane;
+    let public_pane_id = server.app.public_pane_id(0, pane_id).unwrap();
+    let (_control_rx, _render_rx) = connect_matching_test_shell(&mut server, 1);
+    server.interactive_input_deadlines.clear();
+
+    server.handle_server_event_with_render_impact(ServerEvent::ClientShellPaneInput {
+        client_id: 1,
+        pane_id: public_pane_id,
+        events: vec![crate::protocol::ClientPaneInputEvent::Mouse {
+            kind: crate::protocol::ClientMouseKind::ScrollUp,
+            position: crate::protocol::ClientMousePosition::Cell { column: 2, row: 1 },
+            geometry: None,
+            modifiers: 0,
+            lines: 3,
+        }],
+    });
+
+    assert!(input_rx.try_recv().is_err());
+    assert!(!server.interactive_input_deadlines.contains_key(&pane_id));
+    shutdown_test_runtimes(&mut server);
+}
+
+#[tokio::test]
 async fn client_shell_split_echo_bypasses_cadence_with_bounded_visible_burst() {
     let mut server = test_headless_server();
     let mut input_rx = install_focused_test_runtime(&mut server, b"PS> old");

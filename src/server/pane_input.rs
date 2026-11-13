@@ -123,6 +123,7 @@ pub(super) fn apply_terminal_attach_scroll(
         },
         modifiers,
     )
+    .map(|_| ())
 }
 
 fn apply_scroll(
@@ -132,7 +133,7 @@ fn apply_scroll(
     lines: u16,
     position: crate::input::mouse::Position,
     modifiers: u8,
-) -> Result<(), String> {
+) -> Result<bool, String> {
     let wheel_kind = match direction {
         AttachScrollDirection::Up => MouseEventKind::ScrollUp,
         AttachScrollDirection::Down => MouseEventKind::ScrollDown,
@@ -146,9 +147,9 @@ fn apply_scroll(
                 AttachScrollDirection::Up => runtime.scroll_up(lines.max(1) as usize),
                 AttachScrollDirection::Down => runtime.scroll_down(lines.max(1) as usize),
             }
-            return Ok(());
+            return Ok(false);
         }
-        return apply_terminal_attach_input(runtime, input);
+        return apply_terminal_attach_input(runtime, input).map(|()| true);
     }
 
     match runtime.wheel_routing() {
@@ -166,22 +167,26 @@ fn apply_scroll(
             runtime
                 .try_send_bytes(Bytes::from(bytes))
                 .map_err(|err| format!("terminal attach mouse wheel input failed: {err}"))?;
+            Ok(true)
         }
         Some(crate::pane::WheelRouting::AlternateScroll) => {
             runtime.scroll_reset();
             let Some(bytes) = runtime.encode_alternate_scroll(wheel_kind) else {
-                return Ok(());
+                return Ok(false);
             };
             runtime
                 .try_send_bytes(Bytes::from(bytes))
                 .map_err(|err| format!("terminal attach alternate scroll input failed: {err}"))?;
+            Ok(true)
         }
-        Some(crate::pane::WheelRouting::HostScroll) | None => match direction {
-            AttachScrollDirection::Up => runtime.scroll_up(lines.max(1) as usize),
-            AttachScrollDirection::Down => runtime.scroll_down(lines.max(1) as usize),
-        },
+        Some(crate::pane::WheelRouting::HostScroll) | None => {
+            match direction {
+                AttachScrollDirection::Up => runtime.scroll_up(lines.max(1) as usize),
+                AttachScrollDirection::Down => runtime.scroll_down(lines.max(1) as usize),
+            }
+            Ok(false)
+        }
     }
-    Ok(())
 }
 
 pub(super) fn apply_terminal_attach_input(
@@ -212,25 +217,25 @@ pub(super) fn apply_client_pane_input_events(
     runtime: &crate::terminal::TerminalRuntime,
     events: &[ClientPaneInputEvent],
 ) -> Result<bool, String> {
-    let mut keyboard_forwarded = false;
-    apply_client_terminal_input_events(runtime, events, true, &mut keyboard_forwarded)?;
-    Ok(keyboard_forwarded)
+    let mut input_forwarded = false;
+    apply_client_terminal_input_events(runtime, events, true, &mut input_forwarded)?;
+    Ok(input_forwarded)
 }
 
 pub(super) fn apply_client_popup_input_events(
     runtime: &crate::terminal::TerminalRuntime,
     events: &[ClientPaneInputEvent],
 ) -> Result<bool, String> {
-    let mut keyboard_forwarded = false;
-    apply_client_terminal_input_events(runtime, events, false, &mut keyboard_forwarded)?;
-    Ok(keyboard_forwarded)
+    let mut input_forwarded = false;
+    apply_client_terminal_input_events(runtime, events, false, &mut input_forwarded)?;
+    Ok(input_forwarded)
 }
 
 pub(super) fn apply_client_terminal_input_events(
     runtime: &crate::terminal::TerminalRuntime,
     events: &[ClientPaneInputEvent],
     host_page_keys: bool,
-    keyboard_forwarded: &mut bool,
+    input_forwarded: &mut bool,
 ) -> Result<(), String> {
     for event in events {
         if let ClientPaneInputEvent::Mouse {
@@ -268,7 +273,7 @@ pub(super) fn apply_client_terminal_input_events(
                     } else {
                         AttachScrollDirection::Down
                     };
-                    apply_scroll(
+                    *input_forwarded |= apply_scroll(
                         runtime,
                         AttachScrollSource::Wheel,
                         direction,
@@ -329,7 +334,7 @@ pub(super) fn apply_client_terminal_input_events(
                     runtime
                         .try_send_bytes(Bytes::from(bytes))
                         .map_err(|err| format!("targeted pane key input failed: {err}"))?;
-                    *keyboard_forwarded |= key_event.kind != KeyEventKind::Release;
+                    *input_forwarded |= key_event.kind != KeyEventKind::Release;
                 }
             }
             crate::raw_input::RawInputEvent::Text(text) => {
@@ -337,7 +342,7 @@ pub(super) fn apply_client_terminal_input_events(
                 runtime
                     .try_send_bytes(Bytes::copy_from_slice(text.as_str().as_bytes()))
                     .map_err(|err| format!("targeted pane text input failed: {err}"))?;
-                *keyboard_forwarded |= !text.as_str().is_empty();
+                *input_forwarded |= !text.as_str().is_empty();
             }
             crate::raw_input::RawInputEvent::Paste(text) => {
                 runtime.scroll_reset();
